@@ -1,0 +1,37 @@
+{
+  "name": "验证策略",
+  "description": "MA5上穿MA20买入，跌破MA20卖出，验证信号-执行分离和T+1",
+  "stock_pool": "custom",
+  "custom_tickers": ["600519", "000858", "601318"],
+  "start_date": "2023-01-01",
+  "end_date": "2025-12-31",
+  "initial_cash": 500000,
+  "buy_condition": {
+    "condition": {
+      "operator": "and",
+      "conditions": [
+        {
+          "indicator": "MA",
+          "comparator": ">",
+          "value": "ma20",
+          "params": {"window": 5}
+        },
+        {
+          "indicator": "VOLUME",
+          "comparator": ">",
+          "value": 500000
+        }
+      ]
+    }
+  },
+  "sell_condition": {
+    "condition": {
+      "indicator": "MA",
+      "comparator": "<",
+      "value": "ma20",
+      "params": {"window": 20}
+    }
+  },
+  "stop_loss": {"type": "fixed", "pct": 0.08},
+  "position_sizing": {"type": "fixed_pct", "pct": 0.3}
+}

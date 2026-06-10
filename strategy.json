@@ -1,0 +1,37 @@
+{
+  "name": "ma_cross_test",
+  "description": "MA5 上穿 MA20 买入，MA5 下穿 MA20 卖出",
+  "stock_pool": "custom",
+  "custom_tickers": ["300442", "601998", "601939"],
+  "start_date": "2024-01-01",
+  "end_date": "2024-12-31",
+  "initial_cash": 100000,
+  "buy_condition": {
+    "condition": {
+      "operator": "and",
+      "conditions": [
+        {
+          "indicator": "MA",
+          "comparator": ">",
+          "value": 15.0,
+          "params": {"window": 5}
+        },
+        {
+          "indicator": "VOLUME",
+          "comparator": ">",
+          "value": 1000000
+        }
+      ]
+    }
+  },
+  "sell_condition": {
+    "condition": {
+      "indicator": "MA",
+      "comparator": "<",
+      "value": 15.0,
+      "params": {"window": 5}
+    }
+  },
+  "stop_loss": {"type": "fixed", "pct": 0.05},
+  "position_sizing": {"type": "fixed_pct", "pct": 0.3}
+}
