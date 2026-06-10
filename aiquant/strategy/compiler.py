@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import re
+
 from aiquant.config.logger import logger
 from aiquant.engine.indicators import INDICATOR_REGISTRY
 from aiquant.strategy.conditions import ComparatorType, CombineType, IndicatorType
@@ -228,12 +230,44 @@ _COMPLEX_INDICATORS = {
 
 # ─── 条件树遍历 ──────────────────────────────────────────────────────────────
 
+_INDICATOR_ALIASES = {
+    "ma": "MA", "ema": "EMA", "rsi": "RSI", "macd": "MACD",
+    "boll": "BOLL", "kdj": "KDJ", "close": "CLOSE", "open": "OPEN",
+    "high": "HIGH", "low": "LOW", "volume": "VOLUME", "amount": "AMOUNT",
+    "turnover": "TURNOVER",
+}
+
+
+def _parse_value_indicator(val) -> tuple[str, dict] | None:
+    """解析 value 中的指标引用，如 "ma20" → ("MA", {"window": 20}), "boll_upper_20" → None。"""
+    if not isinstance(val, str):
+        return None
+    m = re.match(r"^(ma|ema|rsi|macd|boll|kdj|close|open|high|low|volume|amount|turnover)(\d+)$", val, re.IGNORECASE)
+    if m:
+        ind_name = _INDICATOR_ALIASES[m.group(1).lower()]
+        param_val = int(m.group(2))
+        # 根据指标类型确定参数名
+        if ind_name in ("MA", "EMA", "RSI"):
+            return (ind_name, {"window": param_val})
+        elif ind_name == "MACD":
+            return (ind_name, {"fast": param_val, "slow": 26, "signal": 9})
+        elif ind_name == "BOLL":
+            return (ind_name, {"window": param_val, "num_std": 2.0})
+        elif ind_name == "KDJ":
+            return (ind_name, {"window": param_val})
+    return None
+
+
 def _collect_indicator_specs(node: ConditionNode) -> set[tuple[str, tuple]]:
     """收集条件树中所有唯一的 (指标名, 参数元组) 对。"""
     specs = set()
     if node.indicator is not None:
         params_tuple = tuple(sorted(node.params.items())) if node.params else ()
         specs.add((node.indicator.value, params_tuple))
+        # 检查 value 是否引用了另一个指标
+        ref = _parse_value_indicator(node.value)
+        if ref:
+            specs.add((ref[0], tuple(sorted(ref[1].items()))))
     for child in node.conditions:
         specs.update(_collect_indicator_specs(child))
     return specs
@@ -310,29 +344,30 @@ def _compile_leaf(node: ConditionNode, spec_to_expr: dict) -> str:
     comp = node.comparator
     val = node.value
 
+    # 解析 value 中的指标引用（如 "ma20" → CTE 别名）
+    val_sql = _resolve_value(val, spec_to_expr)
+
     if comp == ComparatorType.GT:
-        return f"({indicator_sql}) > {val}"
+        return f"({indicator_sql}) > {val_sql}"
     elif comp == ComparatorType.LT:
-        return f"({indicator_sql}) < {val}"
+        return f"({indicator_sql}) < {val_sql}"
     elif comp == ComparatorType.GTE:
-        return f"({indicator_sql}) >= {val}"
+        return f"({indicator_sql}) >= {val_sql}"
     elif comp == ComparatorType.LTE:
-        return f"({indicator_sql}) <= {val}"
+        return f"({indicator_sql}) <= {val_sql}"
     elif comp == ComparatorType.EQ:
-        return f"({indicator_sql}) = {val}"
+        return f"({indicator_sql}) = {val_sql}"
     elif comp == ComparatorType.CROSS_ABOVE:
-        other_sql = str(val)
         return (
-            f"({indicator_sql}) > {other_sql} "
+            f"({indicator_sql}) > {val_sql} "
             f"AND LAG({indicator_sql}) OVER (PARTITION BY ticker ORDER BY date) "
-            f"<= LAG({other_sql}) OVER (PARTITION BY ticker ORDER BY date)"
+            f"<= LAG({val_sql}) OVER (PARTITION BY ticker ORDER BY date)"
         )
     elif comp == ComparatorType.CROSS_BELOW:
-        other_sql = str(val)
         return (
-            f"({indicator_sql}) < {other_sql} "
+            f"({indicator_sql}) < {val_sql} "
             f"AND LAG({indicator_sql}) OVER (PARTITION BY ticker ORDER BY date) "
-            f">= LAG({other_sql}) OVER (PARTITION BY ticker ORDER BY date)"
+            f">= LAG({val_sql}) OVER (PARTITION BY ticker ORDER BY date)"
         )
     elif comp == ComparatorType.BETWEEN:
         if not isinstance(val, (list, tuple)) or len(val) != 2:
@@ -340,6 +375,29 @@ def _compile_leaf(node: ConditionNode, spec_to_expr: dict) -> str:
         return f"({indicator_sql}) BETWEEN {val[0]} AND {val[1]}"
     else:
         raise ValueError(f"未知比较运算符: {comp}")
+
+
+def _resolve_value(val, spec_to_expr: dict) -> str:
+    """解析 value — 数字直接返回，指标引用解析为 CTE 表达式。"""
+    if isinstance(val, (int, float)):
+        return str(val)
+    if not isinstance(val, str):
+        return str(val)
+
+    ref = _parse_value_indicator(val)
+    if ref:
+        ind_name, params = ref
+        params_tuple = tuple(sorted(params.items()))
+        key = (ind_name, params_tuple)
+        if key in spec_to_expr:
+            return spec_to_expr[key]
+        # 回退：直接生成表达式
+        if ind_name in _SIMPLE_INDICATORS:
+            return _SIMPLE_INDICATORS[ind_name](params)
+        raise ValueError(f"value 引用了指标 {val}，但未找到对应的 CTE")
+
+    # 不是指标引用，当作字面值（数字字符串等）
+    return val
 
 
 def compile_conditions(node: ConditionNode, spec_to_expr: dict) -> str:
