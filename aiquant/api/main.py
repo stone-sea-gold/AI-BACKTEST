@@ -15,7 +15,14 @@ from aiquant.store.sqlite_store import SQLiteStore
 from aiquant.strategy.conditions import IndicatorType
 from aiquant.strategy.models import StrategyConfig
 
-app = FastAPI(title="aiquant", description="A股智能回测 Agent API", version="0.1.0")
+app = FastAPI(title="aiquant", description="A股智能回测 Agent API", version="0.2.0")
+
+# 注册 Chat 路由
+try:
+    from aiquant.api.chat import router as chat_router
+    app.include_router(chat_router)
+except Exception:
+    pass
 
 store = DuckDBStore()
 sqlite_store = SQLiteStore()
